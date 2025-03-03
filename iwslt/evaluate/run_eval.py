@@ -3,16 +3,42 @@ import argparse
 import os
 import whisper
 from tqdm import tqdm
+import numpy as np
 import torchaudio
+from torch.utils.data import Dataset, DataLoader
 
 # parser
 def parse_args():
     parser = argparse.ArgumentParser(description='Evaluation')
-    parser.add_argument('--data', type=str, default='iwslt/corpora/test', help='Path to the data')
-    parser.add_argument('--task', type=str, default='asr', help='Task')
+    parser.add_argument('--data', type=str, default='corpora/test', help='Path to the data')
+    parser.add_argument('--task', type=str, default='transcribe', help='Task')
     parser.add_argument('--model', type=str, default='turbo', help='Model')
+    parser.add_argument('--lang', type=str, default='sw', help='Language')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size for inference')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for data loading')
     args = parser.parse_args()
     return args
+
+# Dataset
+class AudioDataset(Dataset):
+    def __init__(self, audio_files, audio_paths, model_dims):
+        self.audio_files = audio_files
+        self.audio_paths = audio_paths
+        self.model_dims = model_dims
+        
+    def __len__(self):
+        return len(self.audio_files)
+    
+    def __getitem__(self, idx):
+        audio_file = self.audio_files[idx]
+        audio_path = self.audio_paths[idx]
+        
+        # Load and preprocess audio
+        audio = whisper.load_audio(audio_path)
+        audio = whisper.pad_or_trim(audio)
+        mel = whisper.log_mel_spectrogram(audio, n_mels=self.model_dims.n_mels)
+        
+        return audio_file, mel
 
 # main
 def main(args):
@@ -25,8 +51,8 @@ def main(args):
     assert os.path.exists(os.path.join(data_dir, 'wav.scp')), "wav.scp not found"
 
     # check task
-    if args.task.lower() == 's2tt':
-        raise NotImplementedError("Speech-to-Text Translation not yet implemented")
+    task = args.task.lower()
+    assert task in ['transcribe', 'translate'], "Task must be either 'transcribe' or 'translate'"
 
     # load the data
     # read the text.tsv
@@ -44,10 +70,13 @@ def main(args):
             audio_file, audio_path = line.strip().split('\t')
             wav_scp_dict[audio_file] = audio_path
     
-    
+    # Prepare lists for the dataset
+    utterances = list(wav_scp_dict.keys())
+    audio_paths = [wav_scp_dict[utt] for utt in utterances]
+
     # make the output directory
-    # for example, if data_dir is iwslt/corpora/test, the output directory will be iwslt/results/test
-    output_dir = os.path.join('iwslt/results', os.path.basename(data_dir))
+    # for example, if data_dir is corpora/test, the output directory will be results/test
+    output_dir = os.path.join('results', os.path.basename(data_dir))
     os.makedirs(output_dir, exist_ok=True)
 
     # make the output files: text, and stats
@@ -56,34 +85,39 @@ def main(args):
     output_text = os.path.join(output_dir, 'text.tsv')
     output_stats = os.path.join(output_dir, 'stats.tsv')
 
+    # Create dataset and dataloader
+    dataset = AudioDataset(utterances, audio_paths, model.dims)
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        shuffle=False
+    )
+
     wers = []
     with open(output_text, 'w') as f_text, open(output_stats, 'w') as f_stats:
         f_stats.write("audio\tWER\tCER\tBLEU\n")
-        for audio_file, audio_path in tqdm(wav_scp_dict.items(), desc=f"Evaluating {os.path.basename(data_dir)} with {args.model}"):
-            # load the audio
-            audio = whisper.load_audio(audio_path)
-            audio = whisper.pad_or_trim(audio)
-            # make the log-Mel spectrogram
-            mel = whisper.log_mel_spectrogram(audio, n_mels=model.dims.n_mels).to(model.device)
-            # detect the spoken language
-            _, probs = model.detect_language(mel)
-            detected_language = max(probs, key=probs.get)
-            # decode the audio
-            options = whisper.DecodingOptions()
-            result = whisper.decode(model, mel, options)
-            # write the hypothesis and detected language to the text file
-            f_text.write(f"{audio_file}\t{detected_language}\t{result.text}\n")
-            # compute the WER
-            wer = torchaudio.functional.edit_distance(text_dict[audio_file].split(), result.text.split()) / len(text_dict[audio_file].split())
-            wers.append(wer)
-
-            # write stats
-            f_stats.write(f"{audio_file}\t{wer}\t-\t-\n")
-
-        # write the average WER
-        with open("iwslt/results/average_wer.txt", 'w') as f:
+        # Process in batches
+        for batch_uttIDs, batch_mels in tqdm(dataloader, desc=f"Evaluating {os.path.basename(data_dir)} in language {args.lang} with {args.model}"):
+            # Move to device
+            batch_mels = batch_mels.to(model.device)
+            # Detect language
+            _, probs = model.detect_language(batch_mels)
+            detected_languages = [max(p, key=p.get) for p in probs]
+            # Decode
+            options = whisper.DecodingOptions(task=task, language=args.lang)
+            results = whisper.decode(model, batch_mels, options)
+            # Compute metrics
+            for uttID, result, detected_lang in zip(batch_uttIDs, results, detected_languages):
+                gen_text = result.text.lower().strip().strip('.,!?')
+                f_text.write(f"{uttID}\t{detected_lang}\t{gen_text}\n")
+                wer = torchaudio.functional.edit_distance(text_dict[uttID].split(), gen_text.split()) / len(text_dict[uttID].split())
+                wers.append(wer)
+                f_stats.write(f"{uttID}\t{wer}\t-\t-\n")
+        # Write average WER
+        with open(os.path.join(output_dir, 'average_wer.txt'), 'w') as f:
             f.write(str(sum(wers) / len(wers)))
-        
         print(f"Average WER: {sum(wers) / len(wers)}")
 
 
