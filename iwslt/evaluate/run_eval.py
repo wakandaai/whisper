@@ -14,6 +14,8 @@ def parse_args():
     parser.add_argument('--task', type=str, default='transcribe', help='Task')
     parser.add_argument('--model', type=str, default='turbo', help='Model')
     parser.add_argument('--lang', type=str, default='sw', help='Language')
+    parser.add_argument('--beam_size', type=int, default=1, help='Beam size for inference')
+    parser.add_argument('--temperature', type=float, default=0.0, help='Temperature for inference')
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size for inference')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for data loading')
     args = parser.parse_args()
@@ -106,7 +108,7 @@ def main(args):
             _, probs = model.detect_language(batch_mels)
             detected_languages = [max(p, key=p.get) for p in probs]
             # Decode
-            options = whisper.DecodingOptions(task=task, language=args.lang)
+            options = whisper.DecodingOptions(task=task, language=args.lang, beam_size=args.beam_size, temperature=args.temperature)
             results = whisper.decode(model, batch_mels, options)
             # Compute metrics
             for uttID, result, detected_lang in zip(batch_uttIDs, results, detected_languages):
