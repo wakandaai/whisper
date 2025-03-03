@@ -1,11 +1,11 @@
 # Whisper for IWSLT low resource
 
 ## Results
-### Dataset - BembaSpeech
-| Dataset | WER (%) | Model | Language Token |
-|---------|---------|-------|---------------|
-| BembaSpeech | 1.3467161568427066    | turbo | none |
-| BembaSpeech | 1.1780739849291277   | turbo | sw |
+### BembaSpeech
+WER (%) | Model | Language Token |
+|---------|-------|---------------|
+| 1.3467161568427066    | turbo | none |
+| 1.1780739849291277   | turbo | sw |
 
 ## Setup
 
