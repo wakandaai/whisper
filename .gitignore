@@ -12,3 +12,4 @@ thumbs.db
 build
 corpora
 results
+wandb

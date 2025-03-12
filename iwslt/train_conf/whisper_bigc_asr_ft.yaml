@@ -1,0 +1,41 @@
+# Whisper Fine-tuning Configuration
+
+# Model settings
+model:
+  name: "tiny"  # Options: tiny, base, small, medium, large
+
+# Data paths
+data:
+  root: "corpora"
+
+# Task settings
+task:
+  type: "transcribe"  # Options: transcribe, translate
+  source_language: "sw"  # Source language code
+  target_language: "sw"  # Target language code
+
+# Training settings
+training:
+  batch_size: 16
+  num_workers: 4
+  num_epochs: 1
+  learning_rate: 1.0e-5
+  device: "cuda"  # Options: cuda, cpu
+  mixed_precision: true  # Renamed from amp to mixed_precision to match code
+
+# Logging settings
+logging:
+  log_interval: 10 # steps
+
+# WandB settings - moved to top level
+wandb:
+  enabled: true
+  project: "whisper_bigc_asr_ft"
+  run_name: "test"  # Fixed typo from wand_run_name to run_name
+  tags: ["whisper", "asr", "swahili"]
+
+# Output settings
+output:
+  dir: "results/whisper_bigc_asr_ft"
+  save_checkpoints: true
+  checkpoint_interval: 1  # Save checkpoint every N epochs

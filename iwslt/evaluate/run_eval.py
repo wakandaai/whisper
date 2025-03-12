@@ -6,6 +6,8 @@ from tqdm import tqdm
 import numpy as np
 import torchaudio
 from torch.utils.data import Dataset, DataLoader
+import sacrebleu
+from sacrebleu.metrics import BLEU, CHRF
 
 # parser
 def parse_args():
@@ -98,8 +100,10 @@ def main(args):
     )
 
     wers = []
+    bleus = []
+    chrFs = []
     with open(output_text, 'w') as f_text, open(output_stats, 'w') as f_stats:
-        f_stats.write("audio\tWER\tCER\tBLEU\n")
+        f_stats.write("audio\tWER\tchrF\tBLEU\n")
         # Process in batches
         for batch_uttIDs, batch_mels in tqdm(dataloader, desc=f"Evaluating {os.path.basename(data_dir)} in language {args.lang} with {args.model}"):
             # Move to device
@@ -113,14 +117,51 @@ def main(args):
             # Compute metrics
             for uttID, result, detected_lang in zip(batch_uttIDs, results, detected_languages):
                 gen_text = result.text.lower().strip().strip('.,!?')
+                reference = text_dict[uttID].lower().strip().strip('.,!?')
                 f_text.write(f"{uttID}\t{detected_lang}\t{gen_text}\n")
-                wer = torchaudio.functional.edit_distance(text_dict[uttID].split(), gen_text.split()) / len(text_dict[uttID].split())
-                wers.append(wer)
-                f_stats.write(f"{uttID}\t{wer}\t-\t-\n")
+                if task == 'transcribe':
+                    wer = torchaudio.functional.edit_distance(reference, gen_text.split()) / len(text_dict[uttID].split())
+                    wers.append(wer)
+                    f_stats.write(f"{uttID}\t{wer}\t-\t-\n")
+                elif task == 'translate':
+                    # Create references and hypotheses
+                    hypothesis = result.text.strip()
+                    reference = text_dict[uttID].strip()
+                    
+                    # Calculate BLEU using sacrebleu - with version reporting
+                    bleu = sacrebleu.corpus_bleu(
+                        [hypothesis], 
+                        [[reference]], 
+                        lowercase=True,
+                        tokenize='13a'  # Moses tokenizer (standard)
+                    )
+                    
+                    # Calculate chrF using sacrebleu
+                    chrf = sacrebleu.corpus_chrf(
+                        [hypothesis], 
+                        [[reference]]
+                    )
+                    
+                    # Get the scores
+                    bleu_score = bleu.score
+                    chrf_score = chrf.score
+
+                    bleus.append(bleu_score)
+                    chrFs.append(chrf_score)
+                    f_stats.write(f"{uttID}\t-\t{chrf_score}\t{bleu_score}\n")
+
         # Write average WER
-        with open(os.path.join(output_dir, 'average_wer.txt'), 'w') as f:
-            f.write(str(sum(wers) / len(wers)))
-        print(f"Average WER: {sum(wers) / len(wers)}")
+        if len(wers) > 0:
+            with open(os.path.join(output_dir, 'average_wer.txt'), 'w') as f:
+                f.write(str(sum(wers) / len(wers)))
+            print(f"Average WER: {sum(wers) / len(wers)}")
+        else: # write average BLEU and chrF
+            with open(os.path.join(output_dir, 'average_bleu.txt'), 'w') as f:
+                f.write(str(sum(bleus) / len(bleus)))
+            with open(os.path.join(output_dir, 'average_chrF.txt'), 'w') as f:
+                f.write(str(sum(chrFs) / len(chrFs)))
+            print(f"Average BLEU: {sum(bleus) / len(bleus)}")
+            print(f"Average chrF: {sum(chrFs) / len(chrFs)}")
 
 
 if __name__ == '__main__':

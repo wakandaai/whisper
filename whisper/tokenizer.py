@@ -165,6 +165,16 @@ class Tokenizer:
         token_ids = [t for t in token_ids if t < self.timestamp_begin]
         return self.encoding.decode(token_ids, **kwargs)
 
+    def tokenize(self, text: str, **kwargs) -> List[str]:
+        """
+        Tokenizes the given text and returns a list of tokens. Since encoder.tokenize() does not
+        exist, we implement it by encoding the text and decoding the token ids.
+        """
+        token_ids = self.encode(text, **kwargs)
+        strs = [self.encoding.decode([t], **kwargs) for t in token_ids]
+        return strs
+
+
     def decode_with_timestamps(self, token_ids: List[int], **kwargs) -> str:
         """
         Timestamp tokens are above other special tokens' id range and are ignored by `decode()`.

@@ -3,9 +3,10 @@
 ## Results
 
 ### BigC S2TT
-| BLEU    | Model | Language Token | Beam Size | Temperature |
-|---------|-------|--------------- |-----------|-------------|
-|   | large | sw             | 0         | 0.2         |
+| BLEU    |chrF     | Model | Language Token | Beam Size | Temperature |
+|---------|---------|-------|--------------- |-----------|-------------|
+|  2.1206 |  11.6449| large | sw             | 0         | 0.2         |
+|  2.2547 |  13.5129| large | sw             | 0         | 0.2         |
 
 ### BembaSpeech ASR
 | WER     | Model | Language Token | Beam Size | Temperature |
