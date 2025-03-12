@@ -120,7 +120,9 @@ def main(args):
                 reference = text_dict[uttID].lower().strip().strip('.,!?')
                 f_text.write(f"{uttID}\t{detected_lang}\t{gen_text}\n")
                 if task == 'transcribe':
-                    wer = torchaudio.functional.edit_distance(reference, gen_text.split()) / len(text_dict[uttID].split())
+                    reference = reference.split()
+                    pred = gen_text.split()
+                    wer = torchaudio.functional.edit_distance(reference, pred) / len(reference)
                     wers.append(wer)
                     f_stats.write(f"{uttID}\t{wer}\t-\t-\n")
                 elif task == 'translate':

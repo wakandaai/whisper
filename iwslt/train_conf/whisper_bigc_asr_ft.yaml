@@ -18,7 +18,7 @@ task:
 training:
   batch_size: 16
   num_workers: 4
-  num_epochs: 1
+  num_epochs: 5
   learning_rate: 1.0e-5
   device: "cuda"  # Options: cuda, cpu
   mixed_precision: true  # Renamed from amp to mixed_precision to match code

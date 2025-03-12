@@ -16,10 +16,11 @@
 | 1.0453  | large | sw             | 0         | 0.0         |
 | 1.0444  | large | sw             | 0         | 0.2         |
 
-### BigC ASR
-| WER    | Model | Language Token | Beam Size | Temperature |
-|---------|-------|--------------- |-----------|-------------|
-|   | large | sw             | 0         | 0.2         |
+### BigC ASR (finetuned)
+| WER    | Model | Language Token | Beam Size | Temperature | Epochs |
+|---------|-------|--------------- |-----------|-------------|-------------|
+| 0.5404  | tiny-ft | sw             | 0         | 0.2         |1|
+| 0.4946 | tiny-ft | sw             | 0         | 0.2         |1|
 
 
 ## Setup

@@ -489,14 +489,22 @@ def train_from_config(config, model, tokenizer):
     )
     
     # Save checkpoint if specified
-    if config['output'].get('save_checkpoints', False):
+    if config['output'].get('save_checkpoints', True):
         checkpoint_interval = config['output'].get('checkpoint_interval', 1)
         if checkpoint_interval < 1:
             raise ValueError("checkpoint_interval must be greater than or equal to 1")
         
         for epoch in range(1, num_epochs+1):
             checkpoint_path = os.path.join(output_dir, f"checkpoint_{epoch}.pt")
-            torch.save(model.state_dict(), checkpoint_path)
+            
+            # Create checkpoint with both model state and dimensions
+            checkpoint = {
+                "dims": model.dims.__dict__,  # Extract dimensions from the model
+                "model_state_dict": model.state_dict()
+            }
+            
+            # Save the checkpoint
+            torch.save(checkpoint, checkpoint_path)
             
             # Log checkpoint as artifact to wandb if enabled
             if use_wandb:
