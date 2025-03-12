@@ -20,7 +20,7 @@
 | WER    | Model | Language Token | Beam Size | Temperature | Epochs |
 |---------|-------|--------------- |-----------|-------------|-------------|
 | 0.5404  | tiny-ft | sw             | 0         | 0.2         |1|
-| 0.4946 | tiny-ft | sw             | 0         | 0.2         |1|
+| 0.4946 | tiny-ft | sw             | 5         | 0.2         |1|
 
 
 ## Setup
