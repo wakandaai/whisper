@@ -279,7 +279,7 @@ class WhisperTrainer:
             "accuracy": accuracy
         }
     
-    def train(self, train_dataloader, val_dataloader, num_epochs, log_interval=10, use_wandb=False):
+    def train(self, train_dataloader, val_dataloader, num_epochs, log_interval=10, use_wandb=False, output_dir="output"):
         """
         Train the model.
         
@@ -350,6 +350,26 @@ class WhisperTrainer:
                     "val_loss": val_metrics["loss"],
                     "val_accuracy": val_metrics["accuracy"]
                 })
+            save_epoch = epoch + 1
+            checkpoint_path = os.path.join(output_dir, f"checkpoint_{save_epoch}.pt")
+            
+            # Create checkpoint with both model state and dimensions
+            checkpoint = {
+                "dims": self.model.dims.__dict__,  # Extract dimensions from the model
+                "model_state_dict": self.model.state_dict()
+            }
+            
+            # Save the checkpoint
+            torch.save(checkpoint, checkpoint_path)
+            
+            # Log checkpoint as artifact to wandb if enabled
+            if use_wandb:
+                artifact = wandb.Artifact(
+                    name=f"model-checkpoint-{epoch}", 
+                    type="model"
+                )
+                artifact.add_file(checkpoint_path)
+                wandb.log_artifact(artifact)
             
             del batch
             torch.cuda.empty_cache()
@@ -485,35 +505,9 @@ def train_from_config(config, model, tokenizer):
         val_dataloader,
         num_epochs,
         log_interval=logging_interval,
-        use_wandb=use_wandb
+        use_wandb=use_wandb,
+        output_dir=output_dir
     )
-    
-    # Save checkpoint if specified
-    if config['output'].get('save_checkpoints', True):
-        checkpoint_interval = config['output'].get('checkpoint_interval', 1)
-        if checkpoint_interval < 1:
-            raise ValueError("checkpoint_interval must be greater than or equal to 1")
-        
-        for epoch in range(1, num_epochs+1):
-            checkpoint_path = os.path.join(output_dir, f"checkpoint_{epoch}.pt")
-            
-            # Create checkpoint with both model state and dimensions
-            checkpoint = {
-                "dims": model.dims.__dict__,  # Extract dimensions from the model
-                "model_state_dict": model.state_dict()
-            }
-            
-            # Save the checkpoint
-            torch.save(checkpoint, checkpoint_path)
-            
-            # Log checkpoint as artifact to wandb if enabled
-            if use_wandb:
-                artifact = wandb.Artifact(
-                    name=f"model-checkpoint-{epoch}", 
-                    type="model"
-                )
-                artifact.add_file(checkpoint_path)
-                wandb.log_artifact(artifact)
     
     # Finish wandb run if enabled
     if use_wandb:
