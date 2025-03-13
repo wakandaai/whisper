@@ -270,6 +270,7 @@ class WhisperTrainer:
             
             del batch
             torch.cuda.empty_cache()
+            gc.collect()
         
         avg_loss = total_loss / len(dataloader.dataset)
         accuracy = correct_tokens / total_tokens if total_tokens > 0 else 0
@@ -323,13 +324,17 @@ class WhisperTrainer:
                 # Log batch-level metrics
                 if use_wandb:
                     wandb.log({
-                        "batch": epoch * len(train_dataloader) + i,
-                        "batch_loss": loss,
+                        "step": epoch * len(train_dataloader) + i,
+                        "train_loss": loss,
                         "learning_rate": self.optimizer.param_groups[0]['lr'] if self.lr_scheduler else self.optimizer.param_groups[0]['lr']
                     })
                 
                 if (i + 1) % log_interval == 0:
                     print(f"Epoch {epoch+1}/{num_epochs}, Batch {i+1}/{len(train_dataloader)}, Loss: {loss:.4f}")
+
+                del batch
+                torch.cuda.empty_cache()
+                gc.collect()
             
             avg_train_loss = epoch_loss / len(train_dataloader)
             history["train_loss"].append(avg_train_loss)
@@ -346,7 +351,6 @@ class WhisperTrainer:
             if use_wandb:
                 wandb.log({
                     "epoch": epoch + 1,
-                    "train_loss": avg_train_loss,
                     "val_loss": val_metrics["loss"],
                     "val_accuracy": val_metrics["accuracy"]
                 })
@@ -365,14 +369,12 @@ class WhisperTrainer:
             # Log checkpoint as artifact to wandb if enabled
             if use_wandb:
                 artifact = wandb.Artifact(
-                    name=f"model-checkpoint-{epoch}", 
+                    name=f"model-checkpoint-{save_epoch}", 
                     type="model"
                 )
                 artifact.add_file(checkpoint_path)
                 wandb.log_artifact(artifact)
             
-            del batch
-            torch.cuda.empty_cache()
         return history
 
 def load_config(config_path):

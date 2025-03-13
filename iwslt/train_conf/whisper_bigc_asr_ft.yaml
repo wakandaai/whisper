@@ -2,7 +2,7 @@
 
 # Model settings
 model:
-  name: "tiny"  # Options: tiny, base, small, medium, large
+  name: "small"  # Options: tiny, base, small, medium, large
 
 # Data paths
 data:
@@ -16,7 +16,7 @@ task:
 
 # Training settings
 training:
-  batch_size: 16
+  batch_size: 24
   num_workers: 4
   num_epochs: 5
   learning_rate: 1.0e-5
@@ -30,7 +30,7 @@ logging:
 # WandB settings - moved to top level
 wandb:
   enabled: true
-  project: "whisper_bigc_asr_ft"
+  project: "whisper_bigc_asr_small_ft"
   run_name: "test"  # Fixed typo from wand_run_name to run_name
   tags: ["whisper", "asr", "swahili"]
 
