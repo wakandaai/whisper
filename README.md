@@ -71,17 +71,20 @@ You may need [`rust`](http://rust-lang.org) installed as well, in case [tiktoken
 ```bash
 pip install setuptools-rust
 ```
+## Train and Eval guide
+First, download the dataset, for example BembaSpeech or BigC from their publically available sources.
 
-
-## Evaluate
-First generate the task specific files. For bembaspeech, this is done using:
+Then do dataprep for example here: this is for bigC with translation as the task.
 ```shell
-python3 iwslt/utils/dataprep_bembaspeech.py
+python3 iwslt/utils/dataprep_bigc.py --base_path ~/corpora/bigc/data/bem/ --output_dir corpora/ --task translate
 ```
-
-You can then run inference on the test set using:
+You can then make a training config file or use an existing one to call the trainer.
 ```shell
-python3 iwslt/evaluate/run_eval.py --data corpora/test 
+python3 whisper/trainer.py --config iwslt/train_conf/whisper_bigc_s2tt_ft.yaml
+```
+Lastly, evaluate your model
+```shell
+python3 iwslt/evaluate/run_eval.py --model results/whisper_bigc_s2tt_ft/checkpoint_5.pt --temperature 0.2 --batch_size 1 --beam_size 5
 ```
 
 ## License
