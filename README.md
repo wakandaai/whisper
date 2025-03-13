@@ -7,6 +7,8 @@
 |---------|---------|-------|--------------- |-----------|-------------|
 |  2.1206 |  11.6449| large | sw             | 0         | 0.2         |
 |  2.2547 |  13.5129| large | sw             | 0         | 0.2         |
+|  22.6308 |  46.8872| tiny-ft | sw             | 5         | 0.2         |
+
 
 ### BembaSpeech ASR
 | WER     | Model | Language Token | Beam Size | Temperature |

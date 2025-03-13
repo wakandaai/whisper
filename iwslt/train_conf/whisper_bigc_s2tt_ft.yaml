@@ -2,7 +2,7 @@
 
 # Model settings
 model:
-  name: "tiny"  # Options: tiny, base, small, medium, large
+  name: "results/whisper_bigc_asr_ft/checkpoint_5.pt"  # Options: tiny, base, small, medium, large or path to checkpoint
 
 # Data paths
 data:
@@ -32,7 +32,7 @@ wandb:
   enabled: true
   project: "whisper_bigc_s2tt_ft"
   run_name: "test"  # Fixed typo from wand_run_name to run_name
-  tags: ["whisper", "s2tt", "swahili"]
+  tags: ["whisper", "s2tt", "swahili", "english"]
 
 # Output settings
 output:
