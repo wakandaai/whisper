@@ -2,6 +2,11 @@
 
 ## Results
 
+### FFSTC S2TT
+| BLEU    |chrF     | Model | Language Token | Beam Size | Temperature |
+|---------|---------|-------|--------------- |-----------|-------------|
+|  15.8164 |  33.1067| small-ft | yo             | 3         | 0.2         |
+
 ### BigC S2TT
 | BLEU    |chrF     | Model | Language Token | Beam Size | Temperature |
 |---------|---------|-------|--------------- |-----------|-------------|
