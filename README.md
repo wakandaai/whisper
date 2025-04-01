@@ -8,12 +8,14 @@
 |  15.8164 |  33.1067| small-ft | yo             | 3         | 0.2         |
 
 ### BigC S2TT
-| BLEU    |chrF     | Model | Language Token | Beam Size | Temperature |
-|---------|---------|-------|--------------- |-----------|-------------|
-|  2.1206 |  11.6449| large | sw             | 0         | 0.2         |
-|  2.2547 |  13.5129| large | sw             | 0         | 0.2         |
-|  22.6308 |  46.8872| tiny-ft | sw             | 5         | 0.2         |
-|  27.5882 |  52.3598 | small-ft | sw             | 5         | 0.2         |
+Training Data| BLEU    |chrF     | Model | Language Token | Beam Size | Temperature |
+|---------|---------|---------|-------|--------------- |-----------|-------------|
+|bigc|  2.1206 |  11.6449| large | sw             | 0         | 0.2         |
+|bigc|  2.2547 |  13.5129| large | sw             | 0         | 0.2         |
+|synth|  7.4915 |  27.8425 | small-ft | sw             | 5         | 0.2         |
+|bigc|  22.6308 |  46.8872| tiny-ft | sw             | 5         | 0.2         |
+|bigc|  27.5882 |  52.3598 | small-ft | sw             | 5         | 0.2         |
+|bigc+synth|  28.6117 |  52.5321 | small-ft | sw             | 5         | 0.2         |
 
 
 ### BembaSpeech ASR
