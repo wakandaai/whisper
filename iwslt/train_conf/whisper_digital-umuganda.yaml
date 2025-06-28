@@ -13,29 +13,37 @@ task:
   type: "transcribe"  # Options: transcribe, translate
   source_language: "sw"  # Source language code
   target_language: "sw"  # Target language code
+  language_id: True  # Whether to use language ID
 
 # Training settings
 training:
   batch_size: 32
+  gradient_accumulation_steps: 1  # Effective batch size = batch_size * gradient_accumulation_steps
   num_workers: 4
-  num_epochs: 5
+  training_steps: 10000  # Total training steps
+  validation_fraction: 0.05
+  validate_steps: 1000  # Validate every N steps, same as save_steps
   learning_rate: 1.0e-5
   device: "cuda"  # Options: cuda, cpu
   mixed_precision: true  # Renamed from amp to mixed_precision to match code
+  scheduler_step_strategy: "step"  # Options: step, val
+  scheduler_config:
+    name: "CosineAnnealingLR"
+    params:
+      eta_min: 1.0e-9  # Minimum learning rate
+      
 
 # Logging settings
 logging:
-  log_interval: 10 # steps
+  log_interval: 100 # steps
 
 # WandB settings - moved to top level
 wandb:
   enabled: true
   project: "whisper_digital-umuganda_s2tt_base_ft"
-  run_name: "test"  # Fixed typo from wand_run_name to run_name
   tags: ["whisper", "s2tt", "swahili"]
 
 # Output settings
 output:
   dir: "results/whisper_base_digital-umuganda_s2tt_ft"
   save_checkpoints: true
-  checkpoint_interval: 1  # Save checkpoint every N epochs
