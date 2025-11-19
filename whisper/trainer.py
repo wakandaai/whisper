@@ -15,121 +15,108 @@ from torch.amp import autocast, GradScaler
 from typing import Literal
 from torch.utils.data import Subset
 import torchaudio
+import csv
+import sacrebleu
 
 class WhisperDataset(Dataset):
     def __init__(
         self,
         wav_scp: str,
-        transcript: str,
+        metadata_csv: str,
         model: Whisper,
-        tokenizer: Tokenizer,
-        task: str = "transcribe",
-        source_language: str = None,
-        target_language: str = None,
-        language_id: bool = False
     ):
         """
-        Dataset for Whisper fine-tuning.
+        Dataset for Whisper multitask fine-tuning.
         
         Parameters
         ----------
         wav_scp : str
             Path to wav.scp file with audio paths
-        transcript : str
-            Path to transcript file
+        metadata_csv : str
+            Path to CSV file with columns: audio_id, task, source_language, target_language, text
         model : Whisper
             The Whisper model
-        task : str
-            Task to perform ("transcribe" or "translate")
-        source_language : str
-            Language code (e.g., "en" for English)
-        target_language : str
-            Language code (e.g., "en" for English)
-        tokenizer : Tokenizer
-            Tokenizer to use (required)
-        language_id : bool
-            Whether to include language ID tokens in the input (default is False)
         """
         self.model = model
         self.dims = model.dims
-
-        # Create tokenizer
+        
+        # Create a single tokenizer (language/task doesn't matter, we just need access to all tokens)
         self.tokenizer = get_tokenizer(
             model.is_multilingual,
             num_languages=model.num_languages,
-            language=target_language,
-            task=task
+            language='en',
+            task='transcribe'
         )
         
-        self.task = task
-        self.source_language = source_language
-        self.target_language = target_language
-        self.language_id = language_id
-
         # Read wav.scp
         with open(wav_scp, 'r') as f:
-            audio_lines = [(line.strip().split("\t")) for line in f]
+            audio_lines = [line.strip().split("\t") for line in f]
         
-        # Read transcript
-        with open(transcript, 'r') as f:
-            text_lines = [(line.strip().split("\t") )for line in f]
-
-        assert len(audio_lines) == len(text_lines), "Number of audio files and transcripts do not match"
-        # Create audio_id to filepath and text mappings
-        audio_map = {id: path for id, path in audio_lines}
-        text_map = {id: text for id, text in text_lines}
+        # Create audio_id to filepath mapping
+        self.audio_map = {id: path for id, path in audio_lines}
         
-        # Ensure all audio files have corresponding transcripts
+        # Read metadata CSV
         self.samples = []
-        for audio_id, audio_path in audio_map.items():
-            if audio_id in text_map:
-                self.samples.append((audio_id, audio_path, text_map[audio_id]))
-
+        with open(metadata_csv, 'r', newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                audio_id = row['audio_id']
+                if audio_id in self.audio_map:
+                    self.samples.append({
+                        'audio_id': audio_id,
+                        'audio_path': self.audio_map[audio_id],
+                        'task': row['task'],
+                        'source_language': row['source_language'],
+                        'target_language': row['target_language'],
+                        'text': row['text']
+                    })
+    
     def __len__(self):
         return len(self.samples)
-
+    
     def __getitem__(self, idx):
-        audio_id, audio_path, text = self.samples[idx]
+        sample = self.samples[idx]
+        
+        audio_id = sample['audio_id']
+        audio_path = sample['audio_path']
+        task = sample['task']
+        source_language = sample['source_language']
+        target_language = sample['target_language']
+        text = sample['text']
         
         # Load and preprocess audio
         audio = whisper.load_audio(audio_path)
         audio = whisper.pad_or_trim(audio)
         mel = whisper.log_mel_spectrogram(audio, n_mels=self.dims.n_mels).to(torch.float)
         
-        # Get special tokens
-        sot_token = [self.tokenizer.sot] # Start of token sequence
-        source_lang_token = [self.tokenizer.to_language_token(self.source_language)]
-        target_lang_token = [self.tokenizer.to_language_token(self.target_language)]
-        task_token = [self.tokenizer.transcribe if self.task == "transcribe" else self.tokenizer.translate]
+        # Get special tokens using the single tokenizer
+        sot_token = [self.tokenizer.sot]
+        source_lang_token = [self.tokenizer.to_language_token(source_language)]
+        target_lang_token = [self.tokenizer.to_language_token(target_language)]
+        task_token = [self.tokenizer.transcribe if task == "transcribe" else self.tokenizer.translate]
         eot_token = [self.tokenizer.eot]
         
         # Encode the text
         text_tokens = self.tokenizer.encode(" " + text.strip())
         
-        if self.language_id:
-            # Create input and target tokens
-            # Input: SOT sequence followed by text tokens (for teacher forcing)
-            input_tokens = torch.tensor(sot_token + target_lang_token + task_token + text_tokens)
-            
-            # Target: text tokens followed by EOT (shifted right from input)
-            target_tokens = torch.tensor(source_lang_token + task_token + text_tokens + eot_token)
-        else:
-            # Create input and target tokens without language ID
-            # Input: SOT sequence followed by text tokens (for teacher forcing)
-            input_tokens = torch.tensor(sot_token + task_token + text_tokens)
-            
-            # Target: text tokens followed by EOT (shifted right from input)
-            target_tokens = torch.tensor(task_token + text_tokens + eot_token)
+        # Create input and target tokens with language ID
+        # Input: SOT + target_lang + task + text tokens (for teacher forcing)
+        input_tokens = torch.tensor(sot_token + target_lang_token + task_token + text_tokens)
+        
+        # Target: source_lang + task + text tokens + EOT (shifted right from input)
+        target_tokens = torch.tensor(source_lang_token + task_token + text_tokens + eot_token)
         
         return {
             "mel": mel,
             "input_tokens": input_tokens,
             "target_tokens": target_tokens,
-            "audio_ids": audio_id,
-            "reference_texts": text.strip()  # Store reference text for validation
+            "audio_id": audio_id,
+            "task": task,
+            "source_language": source_language,
+            "target_language": target_language,
+            "reference_text": text.strip()
         }
-
-
+    
     def collate_fn(self, batch):
         """
         Collate function for the DataLoader.
@@ -138,20 +125,26 @@ class WhisperDataset(Dataset):
         mels = [item["mel"] for item in batch]
         input_tokens = [item["input_tokens"] for item in batch]
         target_tokens = [item["target_tokens"] for item in batch]
-        audio_ids = [item["audio_ids"] for item in batch]
-        reference_texts = [item["reference_texts"] for item in batch]
+        audio_ids = [item["audio_id"] for item in batch]
+        tasks = [item["task"] for item in batch]
+        source_languages = [item["source_language"] for item in batch]
+        target_languages = [item["target_language"] for item in batch]
+        reference_texts = [item["reference_text"] for item in batch]
         
         mels = torch.stack(mels)
         
-        # Pad token sequences
-        input_tokens = pad_sequence(input_tokens, batch_first=True, padding_value=self.tokenizer.eot)
-        target_tokens = pad_sequence(target_tokens, batch_first=True, padding_value=self.tokenizer.eot)
+        # Pad token sequences (use -100 for input_tokens padding)
+        input_tokens = pad_sequence(input_tokens, batch_first=True, padding_value=-100)
+        target_tokens = pad_sequence(target_tokens, batch_first=True, padding_value=-100)
         
         return {
             "mel": mels,
             "input_tokens": input_tokens,
             "target_tokens": target_tokens,
             "audio_ids": audio_ids,
+            "tasks": tasks,
+            "source_languages": source_languages,
+            "target_languages": target_languages,
             "reference_texts": reference_texts
         }
 
@@ -161,20 +154,17 @@ class WhisperTrainer:
         self,
         model: Whisper,
         optimizer: torch.optim.Optimizer,
-        scheduler_step_strategy:Literal['val', 'step'],
+        scheduler_step_strategy: Literal['val', 'step'],
         lr_scheduler=None,
         device="cuda" if torch.cuda.is_available() else "cpu",
-        use_mixed_precision=True,  # Add mixed precision flag
+        use_mixed_precision=True,
         batch_size=32,
         gradient_accumulation_steps=1,
         validation_fraction=0.05,
-        task: str = "transcribe",
-        language: str = "en",
         validate_steps: int = 10000
-
     ):
         """
-        Trainer for Whisper models.
+        Trainer for Whisper models with multitask support.
         
         Parameters
         ----------
@@ -182,26 +172,22 @@ class WhisperTrainer:
             The Whisper model to fine-tune
         optimizer : torch.optim.Optimizer
             Optimizer to use for training
-        scheduler_step_strategy:Literal['val', 'step'],
-            Strategy for learning rate scheduler step, either 'val' or 'step'
-        lr_scheduler : 
-            Learning rate scheduler (optional)
+        scheduler_step_strategy : Literal['val', 'step']
+            Strategy for learning rate scheduler step
+        lr_scheduler : optional
+            Learning rate scheduler
         device : str
             Device to use for training
         use_mixed_precision : bool
-            Whether to use mixed precision training (only works on CUDA)
+            Whether to use mixed precision training
         batch_size : int
             Batch size for training
         gradient_accumulation_steps : int
-            Number of steps to accumulate gradients before updating (default is 1)
+            Number of steps to accumulate gradients
         validation_fraction : float
-            Fraction of data to use for validation (default is 0.1)
-        task : str
-            Task type ("transcribe" or "translate")
-        language : str
-            Target language code (e.g., "en" for English)
+            Fraction of data to use for validation
         validate_steps : int
-            Number of steps after which to validate the model (default is 10000)
+            Number of steps after which to validate
         """
         self.model = model.to(device)
         self.optimizer = optimizer
@@ -211,8 +197,6 @@ class WhisperTrainer:
         self.batch_size = batch_size
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.validation_fraction = validation_fraction
-        self.task = task
-        self.language = language
         self.validate_steps = validate_steps
         
         # Mixed precision settings
@@ -322,25 +306,21 @@ class WhisperTrainer:
         return loss.item() * self.gradient_accumulation_steps
 
     @torch.no_grad()
-    def validate(self, dataloader, task_type, target_language, validation_fraction=0.05):
+    def validate(self, dataloader, validation_fraction=0.05):
         """
-        Validate the model on validation data.
+        Validate the model on validation data with separate metrics per task.
         
         Parameters
         ----------
         dataloader : DataLoader
             DataLoader for validation data
-        task_type : str
-            Task type ("transcribe" or "translate")
-        target_language : str
-            Target language code (e.g., "en" for English)
         validation_fraction : float
-            Fraction of data to use for validation (default is 0.1)
+            Fraction of data to use for validation (default is 0.05)
             
         Returns
         -------
         metrics : dict
-            Dictionary of validation metrics
+            Dictionary of validation metrics per task
         """
         self.model.eval()
         
@@ -353,102 +333,139 @@ class WhisperTrainer:
         subset_indices = indices[:val_samples]
         subset_dataset = Subset(dataloader.dataset, subset_indices)
         
-        # Create a new dataloader for the subset with batch_size=1 for decoding
+        # Create a new dataloader for the subset
         subset_dataloader = DataLoader(
             subset_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             collate_fn=dataloader.dataset.collate_fn,
             num_workers=1,
-            pin_memory= True if self.device == "cuda" else False
+            pin_memory=True if self.device == "cuda" else False
         )
         
         print(f"Validating on {val_samples} samples ({validation_fraction*100:.1f}% of validation set)")
         
-        # Initialize metrics lists
-        if task_type == "transcribe":
-            wers = []
-            cers = []
-            scores = []
-        else:  # translate
-            raise NotImplementedError("Translation task not implemented in this method")
-        
-        processed_samples = 0
+        # Initialize metrics per task
+        task_metrics = {}
         
         with torch.no_grad():
-            for batch in tqdm(subset_dataloader, desc="Validating with decoding"):
+            for batch in tqdm(subset_dataloader, desc="Validating"):
                 # Get batch data
                 audio_ids = batch["audio_ids"]
                 mel = batch["mel"].to(self.device)
+                tasks = batch["tasks"]
+                source_languages = batch["source_languages"]
+                target_languages = batch["target_languages"]
                 reference_texts = batch["reference_texts"]
                 
-                # Perform decoding
-                options = whisper.DecodingOptions(
-                    task=task_type,
-                    language=target_language,
-                    temperature=0.0,  # Greedy decoding
-                    beam_size=1,      # Greedy search
-                    sample_len=256    # Maximum tokens to decode
-                )
+                # Group by (task, target_language) tuple for efficient processing
+                task_lang_indices = {}
+                for i, (task, target_lang) in enumerate(zip(tasks, target_languages)):
+                    key = (task, target_lang)
+                    if key not in task_lang_indices:
+                        task_lang_indices[key] = []
+                    task_lang_indices[key].append(i)
                 
-                # Decode using Whisper
-                results = whisper.decode(self.model, mel, options)
-                
-                # Process results
-                for i, (result, reference) in enumerate(zip(results, reference_texts)):
-                    hypothesis = result.text.strip()
-                    reference = reference.strip()
+                # Process each (task, target_language) group separately
+                for (task, target_lang), indices in task_lang_indices.items():
+                    if task not in task_metrics:
+                        if task == "transcribe":
+                            task_metrics[task] = {"wers": [], "cers": [], "scores": []}
+                        else:  # translate
+                            task_metrics[task] = {"bleus": [], "chrfs": []}
                     
-                    if task_type == "transcribe":
-                        # Calculate WER and CER
-                        # Split into words for WER
-                        hyp_words = hypothesis.split()
-                        ref_words = reference.split()
+                    # Get samples for this task-language combination
+                    task_mel = mel[indices]
+                    task_references = [reference_texts[i] for i in indices]
+                    task_audio_ids = [audio_ids[i] for i in indices]
+                    
+                    # Perform decoding
+                    options = whisper.DecodingOptions(
+                        task=task,
+                        language=target_lang,  # Now safe - all samples have same target language
+                        temperature=0.0,
+                        beam_size=1,
+                        sample_len=256
+                    )
+                    
+                    results = whisper.decode(self.model, task_mel, options)
+                    
+                    # Compute metrics
+                    for i, (result, reference, audio_id) in enumerate(zip(results, task_references, task_audio_ids)):
+                        hypothesis = result.text.strip()
+                        reference = reference.strip()
                         
-                        if len(ref_words) > 0:
-                            wer = torchaudio.functional.edit_distance(ref_words, hyp_words) / len(ref_words)
-                            wers.append(wer)
+                        if task == "transcribe":
+                            # Calculate WER and CER
+                            hyp_words = hypothesis.split()
+                            ref_words = reference.split()
+                            
+                            if len(ref_words) > 0:
+                                wer = torchaudio.functional.edit_distance(ref_words, hyp_words) / len(ref_words)
+                                task_metrics[task]["wers"].append(wer)
+                            
+                            if len(reference) > 0:
+                                cer = torchaudio.functional.edit_distance(list(reference), list(hypothesis)) / len(reference)
+                                task_metrics[task]["cers"].append(cer)
+                            
+                            if len(ref_words) > 0 and len(reference) > 0:
+                                combined_error = 0.4 * task_metrics[task]["wers"][-1] + 0.6 * task_metrics[task]["cers"][-1]
+                                score = (1 - combined_error) * 100
+                                task_metrics[task]["scores"].append(score)
+                                
+                                print(f"[{task}] Audio ID: {audio_id}")
+                                print(f"Hyp: {hypothesis}")
+                                print(f"Ref: {reference}")
+                                print(f"WER: {wer:.4f}, CER: {cer:.4f}, Score: {score:.2f}")
+                                print("==" * 40)
                         
-                        # Character-level for CER
-                        if len(reference) > 0:
-                            cer = torchaudio.functional.edit_distance(list(reference), list(hypothesis)) / len(reference)
-                            cers.append(cer)
-                        
-                        # Calculate combined score
-                        if len(ref_words) > 0 and len(reference) > 0:
-                            combined_error = 0.4 * wers[-1] + 0.6 * cers[-1]
-                            score = (1 - combined_error) * 100
-                            scores.append(score)
-                            print(f"Audio ID: {audio_ids[i]}\nHyp: {hypothesis}\nRef: {reference}\nWER: {wer:.4f}, CER: {cer:.4f}, Score: {score:.2f}")
-                            print("==" * 80)
-                    else:  # translate
-                        raise NotImplementedError("Translation task not implemented in this method")
-
-                
-                
-                processed_samples += len(audio_ids)
+                        else:  # translate
+                            # Calculate BLEU and chrF
+                            bleu = sacrebleu.corpus_bleu(
+                                [hypothesis], 
+                                [[reference]], 
+                                lowercase=True,
+                                tokenize='13a'
+                            )
+                            
+                            chrf = sacrebleu.corpus_chrf(
+                                [hypothesis], 
+                                [[reference]]
+                            )
+                            
+                            task_metrics[task]["bleus"].append(bleu.score)
+                            task_metrics[task]["chrfs"].append(chrf.score)
+                            
+                            print(f"[{task}] Audio ID: {audio_id}")
+                            print(f"Hyp: {hypothesis}")
+                            print(f"Ref: {reference}")
+                            print(f"BLEU: {bleu.score:.2f}, chrF: {chrf.score:.2f}")
+                            print("==" * 40)
                 
                 # Clean up
                 del batch, mel
                 torch.cuda.empty_cache()
                 gc.collect()
-                tqdm.write(f"Processed {processed_samples}/{val_samples} validation samples")
         
+        # Compute average metrics per task
         metrics = {}
-        
-        if task_type == "transcribe" and wers and cers:
-            avg_wer = sum(wers) / len(wers)
-            avg_cer = sum(cers) / len(cers)
-            avg_score = sum(scores) / len(scores)
-            
-            metrics.update({
-                "wer": avg_wer,
-                "cer": avg_cer,
-                "score": avg_score,
-            })
-            
-        elif task_type == "translate":
-            raise NotImplementedError("Translation task not implemented in this method")
+        for task, task_data in task_metrics.items():
+            if task == "transcribe":
+                if task_data["wers"] and task_data["cers"]:
+                    avg_wer = sum(task_data["wers"]) / len(task_data["wers"])
+                    avg_cer = sum(task_data["cers"]) / len(task_data["cers"])
+                    avg_score = sum(task_data["scores"]) / len(task_data["scores"])
+                    
+                    metrics[f"{task}_wer"] = avg_wer
+                    metrics[f"{task}_cer"] = avg_cer
+                    metrics[f"{task}_score"] = avg_score
+            else:  # translate
+                if task_data["bleus"]:
+                    avg_bleu = sum(task_data["bleus"]) / len(task_data["bleus"])
+                    avg_chrf = sum(task_data["chrfs"]) / len(task_data["chrfs"])
+                    
+                    metrics[f"{task}_bleu"] = avg_bleu
+                    metrics[f"{task}_chrf"] = avg_chrf
         
         return metrics
     
@@ -479,8 +496,7 @@ class WhisperTrainer:
             Dictionary containing training history
         """
         history = {
-            "train_loss": [],
-            "val_score": []
+            "train_loss": []
         }
 
         # Print training configuration
@@ -564,31 +580,27 @@ class WhisperTrainer:
                 
                 # Validation
                 val_metrics = self.validate(
-                    val_dataloader, 
-                    task_type=self.task,
-                    target_language=self.language,
+                    dataloader=val_dataloader,
                     validation_fraction=self.validation_fraction
                 )
                 
                 # Step learning rate scheduler based on validation
                 if self.lr_scheduler is not None and self.scheduler_step_strategy == 'val':
+                    # Use first available score metric for scheduler
+                    score_metric = val_metrics.get('transcribe_score') or val_metrics.get('translate_chrf', 0)
                     if isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        self.lr_scheduler.step(val_metrics["score"])
+                        self.lr_scheduler.step(score_metric)
                     else:
                         self.lr_scheduler.step()
                 
-                # Store validation metrics
-                history["val_score"].append(val_metrics["score"])
-                
-                print(f"Validation Score: {val_metrics['score']:.4f}")
+                # Print validation metrics
+                print(f"Validation Metrics: {val_metrics}")
                 
                 # Log validation metrics
                 if use_wandb:
                     wandb.log({
                         "step": global_step,
-                        "val_score": val_metrics["score"],
-                        "val_wer": val_metrics.get("wer", 0),
-                        "val_cer": val_metrics.get("cer", 0)
+                        **{f"val_{k}": v for k, v in val_metrics.items()}
                     })
                 
                 # Save checkpoint
@@ -677,25 +689,19 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, lr_scheduler=None):
         lr_scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     
     # Get the step to resume from
-    start_step = checkpoint.get('step', 0)
+    start_step = checkpoint.get('global_step', 0)
     
     print(f"Resumed from step {start_step}")
     return start_step
 
-def train_from_config(config, model, tokenizer):
+def train_from_config(config, model):
     
     # Data paths
     data_root = config['data']['root']
     train_wav_scp = f"{data_root}/train/wav.scp"
-    train_transcript = f"{data_root}/train/text.tsv"
+    train_metadata = f"{data_root}/train/metadata.csv"
     val_wav_scp = f"{data_root}/dev/wav.scp"
-    val_transcript = f"{data_root}/dev/text.tsv"
-    
-    # Task settings
-    task_type = config['task']['type']
-    source_language = config['task']['source_language']
-    target_language = config['task']['target_language']
-    language_id = config['task'].get('language_id', False)
+    val_metadata = f"{data_root}/dev/metadata.csv"
     
     # Training settings
     batch_size = config['training']['batch_size']
@@ -705,18 +711,17 @@ def train_from_config(config, model, tokenizer):
     resume_from = config['training'].get('resume_from', None)
     validate_steps = config['training'].get('validate_steps', 10000)
     gradient_accumulation_steps = config['training'].get('gradient_accumulation_steps', 1)
-
     
-    # Mixed precision settings (with default if not specified)
+    # Mixed precision settings
     use_mixed_precision = config['training'].get('mixed_precision', True)
-
+    
     # Logging settings
     logging_interval = config['logging'].get('log_interval', 10)
     
-    # WandB settings - look in both potential locations
-    use_wandb = config.get('wandb', {}).get('enabled', False) or config.get('logging', {}).get('wandb', False)
-    wandb_project = config.get('wandb', {}).get('project', config.get('logging', {}).get('wandb_project', 'whisper-finetuning'))
-    wandb_run_name = config.get('wandb', {}).get('run_name', config.get('logging', {}).get('wand_run_name', None))
+    # WandB settings
+    use_wandb = config.get('wandb', {}).get('enabled', False)
+    wandb_project = config.get('wandb', {}).get('project', 'whisper-multitask')
+    wandb_run_name = config.get('wandb', {}).get('run_name', None)
     wandb_tags = config.get('wandb', {}).get('tags', [])
     
     # Initialize wandb if enabled
@@ -727,9 +732,6 @@ def train_from_config(config, model, tokenizer):
             tags=wandb_tags,
             config={
                 'model': config['model']['name'],
-                'task': task_type,
-                'source_language': source_language,
-                'target_language': target_language,
                 'batch_size': batch_size,
                 'learning_rate': learning_rate,
                 'training_steps': training_steps,
@@ -739,21 +741,15 @@ def train_from_config(config, model, tokenizer):
     
     # Output settings
     output_dir = config['output']['dir']
-    # make output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
-
+    
     num_workers = config['training'].get('num_workers', 4)
     
     # Create datasets
     train_dataset = WhisperDataset(
         train_wav_scp, 
-        train_transcript, 
-        model,
-        task=task_type,
-        source_language=source_language,
-        target_language=target_language,
-        tokenizer=tokenizer,
-        language_id=language_id
+        train_metadata, 
+        model
     )
     
     train_dataloader = DataLoader(
@@ -767,13 +763,8 @@ def train_from_config(config, model, tokenizer):
     
     val_dataset = WhisperDataset(
         val_wav_scp, 
-        val_transcript, 
-        model,
-        task=task_type,
-        source_language=source_language,
-        target_language=target_language,
-        tokenizer=tokenizer,
-        language_id=language_id
+        val_metadata, 
+        model
     )
     
     val_dataloader = DataLoader(
@@ -796,26 +787,26 @@ def train_from_config(config, model, tokenizer):
     # Create learning rate scheduler
     scheduler_step_strategy = config['training'].get('scheduler_step_strategy')
     scheduler_config = config['training'].get('scheduler_config', None)
-    # ensure the scheduler config is a dict
+    
     if scheduler_config is not None and not isinstance(scheduler_config, dict):
         raise ValueError("Scheduler config must be a dictionary")
-    lr_scheduler = None
+    
     lr_scheduler = WhisperTrainer.create_scheduler(
         optimizer, 
         scheduler_config,
         training_steps=training_steps,
     )
-    # ensure it is a valid scheduler
+    
     assert lr_scheduler is not None, "Failed to create a valid learning rate scheduler"
     print(lr_scheduler.state_dict())
-
+    
     # Resume from checkpoint if specified
     start_step = 0
     if resume_from:
         start_step = load_checkpoint(resume_from, model, optimizer, lr_scheduler)
         print(f"Resuming training from step {start_step + 1}")
     
-    # Create trainer with mixed precision support
+    # Create trainer
     trainer = WhisperTrainer(
         model=model,
         optimizer=optimizer,
@@ -826,10 +817,8 @@ def train_from_config(config, model, tokenizer):
         batch_size=batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         validation_fraction=config['training'].get('validation_fraction', 0.05),
-        task=task_type,
-        language=target_language,
         validate_steps=validate_steps
-        )
+    )
     
     # Train model
     history = trainer.train(
@@ -849,92 +838,6 @@ def train_from_config(config, model, tokenizer):
     return history
 
 
-def run_sanity_check(config_path, tokenizer):
-    # Load configuration
-    config = load_config(config_path)
-    
-    # Extract settings from config
-    model_name = config['model']['name']
-    
-    # Data paths
-    data_root = config['data']['root']
-    train_wav_scp = f"{data_root}/train/wav.scp"
-    train_transcript = f"{data_root}/train/text.tsv"
-    val_wav_scp = f"{data_root}/dev/wav.scp"
-    val_transcript = f"{data_root}/dev/text.tsv"
-    
-    # Task settings
-    task_type = config['task']['type']
-    source_language = config['task']['source_language']
-    target_language = config['task']['target_language']
-    
-    device = config['training']['device']
-    batch_size = config['training']['batch_size']
-    # Load model
-    model = whisper.load_model(model_name)
-
-    num_workers = config['training'].get('num_workers', 4)
-    
-    # Create datasets
-    train_dataset = WhisperDataset(
-        train_wav_scp, 
-        train_transcript, 
-        model,
-        task=task_type,
-        source_language=source_language,
-        target_language=target_language,
-        tokenizer=tokenizer
-    )
-    
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=train_dataset.collate_fn,
-        num_workers=num_workers,
-        pin_memory=True if device=="cuda" else False
-    )
-    
-    val_dataset = WhisperDataset(
-        val_wav_scp, 
-        val_transcript, 
-        model,
-        task=task_type,
-        source_language=source_language,
-        target_language=target_language,
-        tokenizer=tokenizer
-
-    )
-    
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        collate_fn=val_dataset.collate_fn,
-        num_workers=num_workers,
-        pin_memory=True if device=="cuda" else False
-    )
-    
-    # Sanity check
-    for batch in train_dataloader:
-        assert "mel" in batch
-        assert "input_tokens" in batch
-        assert "target_tokens" in batch
-
-        mel = batch["mel"]
-        input_tokens = batch["input_tokens"]
-        target_tokens = batch["target_tokens"]
-
-        # decode text
-        print("Input tokens:")
-        print(tokenizer.decode(input_tokens[0]))
-        print("Target tokens:")
-        print(tokenizer.decode(target_tokens[0]))
-
-        break
-    
-    return
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune Whisper model")
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config file")
@@ -948,22 +851,7 @@ if __name__ == "__main__":
     model_name = config['model']['name']
     model = whisper.load_model(model_name)
 
-    # Task settings
-    task = config['task']['type']
-    source_language = config['task']['source_language']
-    target_language = config['task']['target_language']
-
-    # create tokenizer
-    tokenizer = get_tokenizer(
-            model.is_multilingual,
-            num_languages=model.num_languages,
-            language=target_language,
-            task=task
-        )
-
-    # run sanity check for data loading
-    # run_sanity_check(args.config, tokenizer)
     torch.cuda.empty_cache()
     gc.collect()
     
-    history = train_from_config(config, model, tokenizer)
+    history = train_from_config(config, model)
