@@ -8,7 +8,7 @@ data:
 
 # Training settings
 training:
-  batch_size: 24
+  batch_size: 48
   num_workers: 4
   training_steps: 10000
   validate_steps: 1000
