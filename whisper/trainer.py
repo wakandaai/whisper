@@ -133,9 +133,9 @@ class WhisperDataset(Dataset):
         
         mels = torch.stack(mels)
         
-        # Pad token sequences (use -100 for input_tokens padding)
-        input_tokens = pad_sequence(input_tokens, batch_first=True, padding_value=-100)
-        target_tokens = pad_sequence(target_tokens, batch_first=True, padding_value=-100)
+        # Pad token sequences (use -100 for target_tokens padding)
+        input_tokens = pad_sequence(input_tokens, batch_first=True, padding_value=self.tokenizer.eot)
+        target_tokens = pad_sequence(target_tokens, batch_first=True, padding_value=self.tokenizer.eot)
         
         return {
             "mel": mels,
