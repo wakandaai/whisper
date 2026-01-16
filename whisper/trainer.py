@@ -17,6 +17,12 @@ from torch.utils.data import Subset
 import torchaudio
 import csv
 import sacrebleu
+import sys
+
+try:
+    csv.field_size_limit(sys.maxsize)
+except OverflowError:
+    csv.field_size_limit(21474836)
 
 class WhisperDataset(Dataset):
     def __init__(
