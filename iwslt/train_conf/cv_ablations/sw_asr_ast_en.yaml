@@ -1,0 +1,40 @@
+# Model settings
+model:
+  name: "small"  # Options: tiny, base, small, medium, large
+
+# Data paths
+data:
+  root: "corpora/cv_ablations/sw_asr_ast_en"
+
+# Training settings
+training:
+  batch_size: 48
+  num_workers: 4
+  training_steps: 25000
+  validate_steps: 2500
+  learning_rate: 1.0e-5
+  device: "cuda"
+  mixed_precision: true
+  gradient_accumulation_steps: 1
+  validation_fraction: 0.05
+  scheduler_step_strategy: "step"
+  scheduler_config:
+    name: "CosineAnnealingLR"
+    params:
+      eta_min: 1.0e-9
+
+# Logging settings
+logging:
+  log_interval: 10
+
+# WandB settings
+wandb:
+  enabled: true
+  project: "whisper_cv_ablations"
+  run_name: "small_sw_asr_ast_en"
+  tags: ["whisper", "asr", "swahili", "english"]
+
+# Output settings
+output:
+  dir: "results/whisper_cv_ablations/sw_asr_ast_en"
+  save_checkpoints: true
